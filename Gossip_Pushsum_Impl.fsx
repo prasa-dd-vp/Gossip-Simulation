@@ -8,6 +8,7 @@ open Akka.Configuration
 
 let system = ActorSystem.Create("Gossip")
 
+
 // Input from Command Line
 let mutable nodesCount = fsi.CommandLineArgs.[1] |> int
 let topology = fsi.CommandLineArgs.[2]
