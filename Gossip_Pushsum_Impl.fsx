@@ -29,10 +29,9 @@ type TopologyCommands =
 
 type GossipCommands = 
     | SetNeighbours of IActorRef * list<IActorRef>
-    | ReceiveGossip
-    | SendGossip
-    | InformNeighbours
-    | LimitReached
+    | SpreadGossip
+    | InformNeighbours of string
+    | LimitReached of string
     
 type ActorCommands = 
     | Create
@@ -44,11 +43,12 @@ type InitiatorCommands =
     | TopologyBuilt
     | TerminateNode  
     
+let getCubeRoot number = (number|>float)**(1.0/3.0) |> System.Convert.ToInt32
 
 let Topology(mailbox:Actor<_>) = 
     let mutable nodescompleted=0
     let mutable initiatorRef = null
-    let mutable neighbours = []
+    let mutable neighbors = []
     let rec loop() =actor{
         let! message = mailbox.Receive()
         match message with
@@ -62,45 +62,69 @@ let Topology(mailbox:Actor<_>) =
                                                         mailbox.Self<!ThreeDTopology(actorsList)
                                                         
         | LineTopology(actorsList)              ->  for i in 0 .. nodesCount-1 do
-                                                        neighbours <- []
+                                                        neighbors <- []
                                                         if i <> 0 then
-                                                            neighbours <- List.append neighbours [actorsList.Item(i-1)] 
+                                                            //TODO
+                                                            neighbors <- List.append neighbors [actorsList.Item(i-1)] 
                                                         if i <> nodesCount-1 then
-                                                            neighbours <- List.append neighbours [actorsList.Item(i+1)]  
-                                                        actorsList.Item(i)<!SetNeighbours(initiatorRef,neighbours)   
+                                                            neighbors <- List.append neighbors [actorsList.Item(i+1)]
 
-        | FullTopology(actorsList)              ->  let mutable actorName = ""
-                                                    let mutable actorId = 0
-                                                    for i in 0 .. actorsList.Length-1 do
-                                                        actorName <- actorsList.Item(i).Path.Name
-                                                        actorId  <- (actorName.Split '-').[1] |> int
-                                                        neighbours <- actorsList 
-                                                                        |> List.indexed 
-                                                                        |> List.filter (fun (i, _) -> i <> actorId) 
-                                                                        |> List.map snd
+                                                        actorsList.Item(i)<!SetNeighbours(initiatorRef,neighbors)   
 
-                                                        actorsList.Item(i) <! SetNeighbours(initiatorRef,neighbours)  
+        | FullTopology(actorsList)              ->  for i in 0 .. actorsList.Length-1 do
+                                                        neighbors <- actorsList |> List.filter (fun actor -> actor.Path.Name <> actorsList.Item(i).Path.Name) 
+                                                        actorsList.Item(i) <! SetNeighbours(initiatorRef, neighbors)  
                                                         
-        | ThreeDTopology(actorsList)            ->  let n= sqrt(nodesCount|>float) |> int
-                                                    nodesCount<-n*n
-                                                    for i in 0 .. nodesCount-1 do
-                                                        neighbours <- []
-                                                        if i%n <> 0 then
-                                                            neighbours <- List.append neighbours [actorsList.Item(i-1)]
-                                                        if i%n <> n-1 then
-                                                            neighbours <- List.append neighbours [actorsList.Item(i+1)]
-                                                        if i/n <> 0 then 
-                                                            neighbours <- List.append neighbours [actorsList.Item(i-n)]
-                                                        if i/n <> n-1 then 
-                                                            neighbours <- List.append neighbours [actorsList.Item(i+n)]
-                                                        if topology = "imp2D" then 
-                                                            // let mutable next = rnd.Next()
-                                                            // while temp.ContainsKey(next%nodecount) do
-                                                            //     next <- rnd.Next()
-                                                            neighbours <- List.append neighbours [actorsList.Item(nodesCount-1-i)]
-                                                        actorsList.Item(i)<!SetNeighbours(initiatorRef,neighbours) 
+        | ThreeDTopology(actorsList)            ->  //printfn "%d" nodesCount
+                                                    let dimension = getCubeRoot nodesCount
+                                                    // printfn "%d" dimension
+                                                    let planeSize = dimension * dimension
+                                                    let mutable idx = 0
+                                                    for k in 0 .. dimension-1 do
+                                                        for i in 0 .. dimension-1 do
+                                                            for j in 0 .. dimension-1 do
+                                                                // printfn "Finding neighbors for %d" ((i*dimension) + j + (k*planeSize))
+                                                                neighbors <- []
+
+                                                                if j > 0 then
+                                                                    idx <- (i*dimension) + (j-1) + (k*planeSize)
+                                                                    neighbors <- [actorsList.Item(idx)]
+
+                                                                if j < dimension-1 then
+                                                                    idx <- (i*dimension) + (j+1) + (k*planeSize)
+                                                                    neighbors <- List.append neighbors [actorsList.Item(idx)]
+
+                                                                if i > 0 then
+                                                                    idx <- ((i-1)*dimension) + j + k*planeSize
+                                                                    neighbors <- List.append neighbors [actorsList.Item(idx)]
+
+                                                                if i < dimension-1 then
+                                                                    idx <- ((i+1)*dimension) + j + k*planeSize
+                                                                    neighbors <- List.append neighbors [actorsList.Item(idx)]
+
+                                                                if k > 0 then
+                                                                    idx <- (i*dimension) + j + ((k-1)*planeSize)
+                                                                    neighbors <- List.append neighbors [actorsList.Item(idx)]
+
+                                                                if k < dimension-1 then
+                                                                    idx <- (i*dimension) + j + ((k+1)*planeSize)
+                                                                    neighbors <- List.append neighbors [actorsList.Item(idx)]
+
+                                                                if topology = "imp3D" then
+                                                                    let mutable randInt = random.Next() 
+                                                                    while List.contains (actorsList.Item(randInt % nodesCount)) neighbors && actorsList.Item(randInt % nodesCount) <> actorsList.Item((i*dimension) + j + (k*planeSize)) do
+                                                                        randInt<-random.Next()
+                                                                    neighbors <- List.append neighbors [actorsList.Item(randInt % nodesCount)]
+
+                                                                idx <- (i*dimension) + j + (k*planeSize)
+                                                                // printfn "Neighbors of %d are" idx 
+                                                                // for i in 0 .. neighbors.Length-1 do
+                                                                    // printfn "%s" (neighbors.Item(i).Path.Name |> string)
+                                                                    // printfn ""
+                                                                actorsList.Item(idx) <! SetNeighbours(initiatorRef, neighbors)
         
         | ConstructionDone                      ->  if nodescompleted=nodesCount-1 then
+                                                        printfn "construction done"
                                                         initiatorRef<!TopologyBuilt
                                                     nodescompleted<-nodescompleted+1
                         
@@ -111,57 +135,48 @@ let topologyRef = spawn system "Topology" Topology
 
 let Gossip(mailbox:Actor<_>)=
     let mutable initiatorRef = null
-    let mutable neigbhours=[]
-    let gossipReceiveLimit = 1000
-    let gossipSendLimit = 10
+    let mutable neighborList=[]
+    let gossipReceiveLimit = 10
     let mutable gossipReceiveCount = 0
-    let mutable gossipSentCount = 0
     let mutable isNodeInactive = false
-    let mutable inactiveNeighbours = 0
-    // let id = mailbox.Self.Path.Name |> int
 
     let rec loop() =actor{
         let! message = mailbox.Receive()
-        // printfn "%A %i" message id
         match message with
-        | SetNeighbours(initiator,nodelist)         ->  printfn "Neighbours received"
-                                                        neigbhours<-nodelist
+        | SetNeighbours(initiator,nodelist)         ->  //printfn "Neighbours received"
+                                                        neighborList<-nodelist
                                                         initiatorRef<-initiator
                                                         mailbox.Sender()<!ConstructionDone
-        
-        | ReceiveGossip                             ->  if not isNodeInactive then
-                                                            printfn "Received Gossip by %s" mailbox.Self.Path.Name
+
+        | SpreadGossip                              ->  printfn "Received Gossip by %s" mailbox.Self.Path.Name
+                                                        try
                                                             if gossipReceiveCount < gossipReceiveLimit then
                                                                 gossipReceiveCount <- gossipReceiveCount + 1
-                                                                mailbox.Self <! SendGossip
-                                                                
-                                                            else if not isNodeInactive then
-                                                                isNodeInactive <- true
-                                                                initiatorRef <! TerminateNode
-                                                                mailbox.Self <! InformNeighbours
-
-        | SendGossip                                ->  if not isNodeInactive then
-                                                            printfn "Sent Gossip by %s" mailbox.Self.Path.Name
-                                                            if gossipSentCount < gossipSendLimit then
-                                                                gossipSentCount <- gossipSentCount + 1
-                                                                //TODO
                                                                 let mutable next = random.Next()
-                                                                neigbhours.Item(next % neigbhours.Length) <! ReceiveGossip
-                                                            
-                                                            else if not isNodeInactive then
-                                                                isNodeInactive <- true
+                                                                if neighborList.Length <> 0 then
+                                                                    neighborList.Item(next % neighborList.Length) <! SpreadGossip
+                                                                
+                                                            else
+                                                                // isNodeInactive <- true
                                                                 initiatorRef <! TerminateNode
-                                                                mailbox.Self <! InformNeighbours
+                                                                mailbox.Self <! InformNeighbours (mailbox.Self.Path.Name.Split '-').[1]
 
-        | InformNeighbours                          ->  for i in 0 .. neigbhours.Length-1 do
-                                                            neigbhours.Item(i) <! LimitReached
+                                                        with
+                                                            | :? System.DivideByZeroException -> printfn "Division asdsad asdasd ahdkasdh aksjdh aksjdh kjasdh jasdkjasdasd asdasd by zero!"; 
+        
+        | InformNeighbours(inActiveNodeId)        ->    for i in 0 .. neighborList.Length-1 do
+                                                            neighborList.Item(i) <! LimitReached(inActiveNodeId)
 
-        | LimitReached                              ->  inactiveNeighbours <- inactiveNeighbours + 1
-                                                        if inactiveNeighbours = neigbhours.Length then
-                                                            isNodeInactive <- true
+        | LimitReached(inActiveNodeId)            ->    neighborList <- neighborList |> List.filter (fun (actor) -> ((actor.Path.Name.Split '-').[1]) <> inActiveNodeId) 
+
+                                                        // for i in 0 .. neighborList.Length-1 do
+                                                            // printfn "%s" (neighborList.Item(i).Path.Name |> string)
+                                                        
+                                                        if neighborList.Length = 0 then
+                                                            // isNodeInactive <- true
                                                             initiatorRef <! TerminateNode
                                                         else
-                                                            mailbox.Self <! SendGossip
+                                                            mailbox.Self <! SpreadGossip
         
         return! loop()
     }
@@ -175,10 +190,10 @@ let Actor (mailbox:Actor<_>) =
         | Create -> printfn("In creation")
                     let mutable actors = []
                     if algorithm = "gossip"  then
-                        actors <- [for i in 0 .. nodesCount do yield(spawn system ("Actor-" + (string i)) Gossip)]
+                        actors <- [for i in 0 .. nodesCount-1 do yield(spawn system ("Actor-" + (string i)) Gossip)]
                     elif algorithm = "pushsum" then
                     //TODO
-                        actors <- [for i in 0 .. nodesCount do yield(spawn system ("Actasdor_" + (string i)) Gossip)]
+                        actors <- [for i in 0 .. nodesCount-1 do yield(spawn system ("Actasdor_" + (string i)) Gossip)]
                     else
                         printfn "Exception: Unknown algorithm!!!"
                     mailbox.Sender() <! ActorsCreated(actors)
@@ -188,22 +203,21 @@ let Actor (mailbox:Actor<_>) =
     loop()
 let actorRef = spawn system "Actor" Actor  
 
+
 let Initiator (mailbox:Actor<_>) = 
     let mutable nodeGossipedCount = 0
     let mutable actorList = []
     let rec loop () = actor {
         let! message = mailbox.Receive()
         match message with 
-        | Init                          ->  actorRef <! Create
+        | Init                          ->  if topology = "3D" || topology = "imp3D" then
+                                                let cbrt = getCubeRoot nodesCount
+                                                nodesCount <- cbrt*cbrt*cbrt
+                                                printfn "%d" nodesCount
+                                            actorRef <! Create
 
         | ActorsCreated(actorRefList)   ->  printfn("Actor created")
                                             actorList <- actorRefList
-                                            """
-                                            for i in 0 .. 3 do
-                                                let mutable str = ""
-                                                str <- actorList.Item(i).Path.Name
-                                                printfn "actor name is %s" str
-                                            """
                                             mailbox.Self <! InitializeTopology(actorList)
         
         | InitializeTopology(actorList) ->  printfn("Initializing topology")
@@ -211,14 +225,12 @@ let Initiator (mailbox:Actor<_>) =
         
         | TopologyBuilt                 ->  printfn("Topology Constructed")
                                             if algorithm = "gossip" then
-                                                actorList.Item(random.Next() % nodesCount) <! ReceiveGossip
+                                                actorList.Item(random.Next() % nodesCount) <! SpreadGossip
                                                 timer.Start()
-                                            """
-                                            else
-                                                let ind = random.Next()%nodecount |> float
-                                                Nodelist.Item(rnd.Next()%nodecount)<!Receive(ind,1.0)
-                                                timer.Start()      
-                                            """
+                                            // else
+                                            //     let ind = random.Next()%nodecount |> float
+                                            //     Nodelist.Item(rnd.Next()%nodecount)<!Receive(ind,1.0)
+                                            //     timer.Start()      
 
         | TerminateNode                 ->  let mutable sender = mailbox.Sender().Path.Name
                                             printfn "Terminated %s" sender
@@ -228,7 +240,8 @@ let Initiator (mailbox:Actor<_>) =
                                                 mailbox.Context.System.Terminate() |> ignore
                                                 printfn "%s,%s,%i,%i" algorithm topology nodesCount timer.ElapsedMilliseconds
         
-        | _                             -> ()
+        | _                             ->  //TODO
+                                            ()
 
         return! loop()
     }
