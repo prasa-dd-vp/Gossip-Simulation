@@ -4,7 +4,6 @@
 open System
 open Akka.Actor
 open Akka.FSharp
-open Akka.Configuration
 
 let system = ActorSystem.Create("Gossip")
 
@@ -15,11 +14,7 @@ let topology = fsi.CommandLineArgs.[2]
 let algorithm = fsi.CommandLineArgs.[3]
 let random = Random(nodesCount)
 let timer = System.Diagnostics.Stopwatch()
-//TODO
-"""
-if topology = "imp2D" || topology = "2D" then
-    nodes <- roundOffNodes nodes
-"""
+
 type TopologyCommands = 
     | BuildTopology of string * list<IActorRef>
     | LineTopology of list<IActorRef>
@@ -27,8 +22,9 @@ type TopologyCommands =
     | ThreeDTopology of list<IActorRef>
     | ConstructionDone
 
-type GossipCommands = 
+type AlgoCommands = 
     | SetNeighbours of IActorRef * list<IActorRef>
+    | ComputePushSum of float * float
     | SpreadGossip
     | InformNeighbours of string
     | LimitReached of string
@@ -133,12 +129,14 @@ let Topology(mailbox:Actor<_>) =
     loop()
 let topologyRef = spawn system "Topology" Topology
 
-let Gossip(mailbox:Actor<_>)=
+let GossipPushsum(mailbox:Actor<_>)=
     let mutable initiatorRef = null
     let mutable neighborList=[]
     let gossipReceiveLimit = 10
     let mutable gossipReceiveCount = 0
-    let mutable isNodeInactive = false
+    let mutable sum = (mailbox.Self.Path.Name.Split '-').[1] |> float
+    let mutable weight = 1.0
+    let mutable exitCount = 0
 
     let rec loop() =actor{
         let! message = mailbox.Receive()
@@ -148,21 +146,36 @@ let Gossip(mailbox:Actor<_>)=
                                                         initiatorRef<-initiator
                                                         mailbox.Sender()<!ConstructionDone
 
-        | SpreadGossip                              ->  printfn "Received Gossip by %s" mailbox.Self.Path.Name
-                                                        try
-                                                            if gossipReceiveCount < gossipReceiveLimit then
-                                                                gossipReceiveCount <- gossipReceiveCount + 1
-                                                                let mutable next = random.Next()
-                                                                if neighborList.Length <> 0 then
-                                                                    neighborList.Item(next % neighborList.Length) <! SpreadGossip
-                                                                
-                                                            else
-                                                                // isNodeInactive <- true
-                                                                initiatorRef <! TerminateNode
-                                                                mailbox.Self <! InformNeighbours (mailbox.Self.Path.Name.Split '-').[1]
+        | SpreadGossip                              -> 
+                                                        //printfn "Received Gossip by %s" mailbox.Self.Path.Name
+                                                        if gossipReceiveCount < gossipReceiveLimit then
+                                                            gossipReceiveCount <- gossipReceiveCount + 1
+                                                            let mutable next = random.Next()
+                                                            if neighborList.Length <> 0 then
+                                                                neighborList.Item(next % neighborList.Length) <! SpreadGossip
+                                                            
+                                                        else
+                                                            // isNodeInactive <- true
+                                                            initiatorRef <! TerminateNode
+                                                            mailbox.Self <! InformNeighbours (mailbox.Self.Path.Name.Split '-').[1]
 
-                                                        with
-                                                            | :? System.DivideByZeroException -> printfn "Division asdsad asdasd ahdkasdh aksjdh aksjdh kjasdh jasdkjasdasd asdasd by zero!"; 
+        | ComputePushSum(recSum,recWeight)          ->  //printfn "Compute push sum %s " mailbox.Self.Path.Name
+                                                        let curSum = sum + recSum
+                                                        let curWeight = weight + recWeight
+                                                        if abs((curSum/curWeight)-(sum/weight))<0.0000000001 then
+                                                            exitCount <- exitCount + 1
+                                                        else
+                                                            exitCount <- 0
+                                                            
+                                                        if exitCount = 3 then 
+                                                            mailbox.Self <! ComputePushSum(recSum,recWeight)
+                                                            initiatorRef <! TerminateNode
+                                                            mailbox.Self <! InformNeighbours (mailbox.Self.Path.Name.Split '-').[1]
+                                                        else
+                                                            sum <- curSum
+                                                            weight <- curWeight
+                                                            if neighborList.Length <> 0 then
+                                                                neighborList.Item(random.Next()%neighborList.Length) <! ComputePushSum(sum/2.0,weight/2.0)
         
         | InformNeighbours(inActiveNodeId)        ->    for i in 0 .. neighborList.Length-1 do
                                                             neighborList.Item(i) <! LimitReached(inActiveNodeId)
@@ -176,12 +189,14 @@ let Gossip(mailbox:Actor<_>)=
                                                             // isNodeInactive <- true
                                                             initiatorRef <! TerminateNode
                                                         else
-                                                            mailbox.Self <! SpreadGossip
+                                                            if algorithm = "gossip" then
+                                                                mailbox.Self <! SpreadGossip
+                                                            else if algorithm = "pushsum" then
+                                                                mailbox.Self <! ComputePushSum(sum, weight)
         
         return! loop()
     }
     loop()
-
 
 let Actor (mailbox:Actor<_>) = 
     let rec loop() = actor {
@@ -189,13 +204,7 @@ let Actor (mailbox:Actor<_>) =
         match message with
         | Create -> printfn("In creation")
                     let mutable actors = []
-                    if algorithm = "gossip"  then
-                        actors <- [for i in 0 .. nodesCount-1 do yield(spawn system ("Actor-" + (string i)) Gossip)]
-                    elif algorithm = "pushsum" then
-                    //TODO
-                        actors <- [for i in 0 .. nodesCount-1 do yield(spawn system ("Actasdor_" + (string i)) Gossip)]
-                    else
-                        printfn "Exception: Unknown algorithm!!!"
+                    actors <- [for i in 0 .. nodesCount-1 do yield(spawn system ("Actor-" + (string i)) GossipPushsum)]
                     mailbox.Sender() <! ActorsCreated(actors)
 
         return! loop()
@@ -227,22 +236,18 @@ let Initiator (mailbox:Actor<_>) =
                                             if algorithm = "gossip" then
                                                 actorList.Item(random.Next() % nodesCount) <! SpreadGossip
                                                 timer.Start()
-                                            // else
-                                            //     let ind = random.Next()%nodecount |> float
-                                            //     Nodelist.Item(rnd.Next()%nodecount)<!Receive(ind,1.0)
-                                            //     timer.Start()      
+                                            elif algorithm = "pushsum" then
+                                                let ind = random.Next() % nodesCount
+                                                actorList.Item(ind) <! ComputePushSum((float) ind,1.0)
+                                                timer.Start()      
 
         | TerminateNode                 ->  let mutable sender = mailbox.Sender().Path.Name
-                                            printfn "Terminated %s" sender
+                                            // printfn "Terminated %s" sender
                                             nodeGossipedCount <- nodeGossipedCount + 1
                                             if nodeGossipedCount = nodesCount then 
-                                                printfn "asdasdasd"
                                                 mailbox.Context.System.Terminate() |> ignore
                                                 printfn "%s,%s,%i,%i" algorithm topology nodesCount timer.ElapsedMilliseconds
         
-        | _                             ->  //TODO
-                                            ()
-
         return! loop()
     }
     loop()
