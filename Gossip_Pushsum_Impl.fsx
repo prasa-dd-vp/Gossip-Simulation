@@ -155,7 +155,6 @@ let GossipPushsum(mailbox:Actor<_>)=
                                                                 neighborList.Item(next % neighborList.Length) <! SpreadGossip
                                                             
                                                         else
-                                                            // isNodeInactive <- true
                                                             initiatorRef <! TerminateNode
                                                             mailbox.Self <! InformNeighbours (mailbox.Self.Path.Name.Split '-').[1]
 
@@ -186,7 +185,6 @@ let GossipPushsum(mailbox:Actor<_>)=
                                                             // printfn "%s" (neighborList.Item(i).Path.Name |> string)
                                                         
                                                         if neighborList.Length = 0 then
-                                                            // isNodeInactive <- true
                                                             initiatorRef <! TerminateNode
                                                         else
                                                             if algorithm = "gossip" then
