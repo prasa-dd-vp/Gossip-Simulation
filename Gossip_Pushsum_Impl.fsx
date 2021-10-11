@@ -48,7 +48,7 @@ let Topology(mailbox:Actor<_>) =
     let rec loop() =actor{
         let! message = mailbox.Receive()
         match message with
-        | BuildTopology(topology,actorsList)    ->  printfn "In build topology"
+        | BuildTopology(topology,actorsList)    ->  //printfn "In build topology"
                                                     initiatorRef<-mailbox.Sender()
                                                     if(topology="line") then
                                                         mailbox.Self<!LineTopology(actorsList)
@@ -120,7 +120,7 @@ let Topology(mailbox:Actor<_>) =
                                                                 actorsList.Item(idx) <! SetNeighbours(initiatorRef, neighbors)
         
         | ConstructionDone                      ->  if nodescompleted=nodesCount-1 then
-                                                        printfn "construction done"
+                                                        //printfn "construction done"
                                                         initiatorRef<!TopologyBuilt
                                                     nodescompleted<-nodescompleted+1
                         
@@ -158,7 +158,7 @@ let GossipPushsum(mailbox:Actor<_>)=
                                                             initiatorRef <! TerminateNode
                                                             mailbox.Self <! InformNeighbours (mailbox.Self.Path.Name.Split '-').[1]
 
-        | ComputePushSum(recSum,recWeight)          ->  //printfn "Compute push sum %s " mailbox.Self.Path.Name
+        | ComputePushSum(recSum,recWeight)        ->    //printfn "Compute push sum %s " mailbox.Self.Path.Name
                                                         let curSum = sum + recSum
                                                         let curWeight = weight + recWeight
                                                         if abs((curSum/curWeight)-(sum/weight))<0.0000000001 then
@@ -200,7 +200,7 @@ let Actor (mailbox:Actor<_>) =
     let rec loop() = actor {
         let! message = mailbox.Receive()
         match message with
-        | Create -> printfn("In creation")
+        | Create -> //printfn("In creation")
                     let mutable actors = []
                     actors <- [for i in 0 .. nodesCount-1 do yield(spawn system ("Actor-" + (string i)) GossipPushsum)]
                     mailbox.Sender() <! ActorsCreated(actors)
@@ -220,17 +220,17 @@ let Initiator (mailbox:Actor<_>) =
         | Init                          ->  if topology = "3D" || topology = "imp3D" then
                                                 let cbrt = getCubeRoot nodesCount
                                                 nodesCount <- cbrt*cbrt*cbrt
-                                                printfn "%d" nodesCount
+                                                //printfn "%d" nodesCount
                                             actorRef <! Create
 
-        | ActorsCreated(actorRefList)   ->  printfn("Actor created")
+        | ActorsCreated(actorRefList)   ->  //printfn("Actor created")
                                             actorList <- actorRefList
                                             mailbox.Self <! InitializeTopology(actorList)
         
-        | InitializeTopology(actorList) ->  printfn("Initializing topology")
+        | InitializeTopology(actorList) ->  //printfn("Initializing topology")
                                             topologyRef <! BuildTopology(topology, actorList)
         
-        | TopologyBuilt                 ->  printfn("Topology Constructed")
+        | TopologyBuilt                 ->  //printfn("Topology Constructed")
                                             if algorithm = "gossip" then
                                                 actorList.Item(random.Next() % nodesCount) <! SpreadGossip
                                                 timer.Start()
@@ -244,7 +244,10 @@ let Initiator (mailbox:Actor<_>) =
                                             nodeGossipedCount <- nodeGossipedCount + 1
                                             if nodeGossipedCount = nodesCount then 
                                                 mailbox.Context.System.Terminate() |> ignore
-                                                printfn "%s,%s,%i,%i" algorithm topology nodesCount timer.ElapsedMilliseconds
+                                                printfn "Algorithm = %s" algorithm
+                                                printfn "Topology = %s" topology
+                                                printfn "Nodes count = %i" nodesCount
+                                                printfn "Time taken for converging = %i" timer.ElapsedMilliseconds
         
         return! loop()
     }
